@@ -1,0 +1,5 @@
+*.output
+a.out
+lex.yy.c
+parse.tab.cc
+parse.tab.hh
