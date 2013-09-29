@@ -27,10 +27,10 @@ PRIM	[\+\-\*/=\[\]<>()!,]
 "int"	{ return INT; }
 "str"	{ return STR; }
 
-{ID}	{ setlval(yytext); return ID; }
+{ID}	{ setlval(strdup(yytext)); return ID; }
 {INT}	{ setlval((void*) atol(yytext)); return NUMBER; }
 {PRIM}	{ return yytext[0]; }
-'[^']*'	{ setlval(yytext); return STRING; }
+'[^']*'	{ setlval(strdup(yytext)); return STRING; }
 
 [ \n\t] { /* Discard whitespace. */ }
 .	{ printf("Unexpected lexeme: %s\n", yytext); }

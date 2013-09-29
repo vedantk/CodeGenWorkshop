@@ -1,13 +1,18 @@
 CC = clang
+CFLAGS = `llvm-config --cppflags`
 CXX = clang++
-CXXFLAGS = -g -Wall -Wextra -std=c++11
+CXXFLAGS = -g -Wall -Wextra -std=c++11 `llvm-config --cppflags`
+LDFLAGS = `llvm-config --libs core jit native`
 
-jit: jit.cc lex.yy.o parse.tab.o
+jit: jit.cc parse.tab.o lex.yy.o
 
 lex.yy.o: lex.l
 	flex $^
-	$(CC) -c lex.yy.c -o $@
+	$(CC) $(CFLAGS) -c lex.yy.c -o $@
 
-parse.tab.o: parse.yy lex.yy.o
+parse.tab.o: parse.yy 
 	bison -r all $< -W --defines
-	$(CXX) -c parse.tab.cc -o $@
+	$(CXX) $(CXXFLAGS) -c parse.tab.cc -o $@
+
+clean:
+	rm -f jit lex.yy.{c,o} parse.tab.{o,cc,hh} parse.output

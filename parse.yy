@@ -10,9 +10,16 @@ extern void yyerror(char const *);
 
 %define api.value.type {union semval}
 
-%token IF ELSE SET NUMBER STRING ID INT STR
-%type<int64_t> NUMBER
-%type<char*> ID STRING
+%token NUMBER ID STRING INT STR IF ELSE SET 
+
+%type <exprs> program exprs block
+%type <expr> expr
+%type <type> semtype
+%type <podint> primitive
+%type <vardef> vardef
+%type <params> params paramlist
+%type <podint> NUMBER
+%type <podstr> ID STRING
 
 %left '='
 %left '+' '-'
@@ -22,53 +29,46 @@ extern void yyerror(char const *);
 %precedence '!'
 
 %%
+program : exprs { program = $1; }
+	;
 
-exprs : %empty
-      | exprs expr
+exprs : expr { $$ = new Block; $$->exprs.push_back($1); }
+      | exprs expr { $1->exprs.push_back($2); }
       ;
 
-expr : atom
-     | funcall
-     | funcdef
-     | '!' expr
-     | '(' expr ')'
-     | expr '+' expr
-     | expr '-' expr
-     | expr '*' expr
-     | expr '/' expr
-     | expr '=' expr
-     | vardecl SET expr
-     | IF '(' expr ')' block ELSE block
+expr : NUMBER { $$ = (Expr*) new Number($1); }
+     | STRING { $$ = (Expr*) new String($1); }
+     | '(' expr ')' { $$ = $2; }
+     | '!' expr { $$ = (Expr*) new UnaryOp('!', $2); }
+     | expr '+' expr { $$ = (Expr*) new BinaryOp('+', $1, $3); }
+     | expr '-' expr { $$ = (Expr*) new BinaryOp('-', $1, $3); }
+     | expr '*' expr { $$ = (Expr*) new BinaryOp('*', $1, $3); }
+     | expr '/' expr { $$ = (Expr*) new BinaryOp('/', $1, $3); } 
+     | expr '=' expr { $$ = (Expr*) new BinaryOp('=', $1, $3); }
+     | vardef SET expr { $$ = (Expr*) new Assignment($1, $3); }
+     | expr '[' exprs ']' { $$ = (Expr*) new FuncCall($1, $3); }
+     | '(' params ')' block { $$ = (Expr*) new FuncDef($2, $4); }
+     | IF '(' expr ')' block ELSE block { $$ = (Expr*) new IfElse($3, $5, $7); }
      ;
 
-atom : NUMBER
-     | STRING
-     ;
-
-funcall : expr '[' exprs ']'
-	;
-
-funcdef : '(' params ')' block
-	;
-
-vardecl : ID '<' semtype '>'
-	;
-
-block : '{' exprs '}'
-      ;
-
-params : %empty
-       | paramlist
+vardef : ID '<' semtype '>' { $$ = new VarDef($1, $3); }
        ;
 
-paramlist : vardecl
-	  | paramlist ',' vardecl
+block : '{' exprs '}' { $$ = $2; }
+      ;
+
+params : %empty { $$ = new Parameters; }
+       | paramlist { $$ = $1; }
+       ;
+
+paramlist : vardef { $$ = new Parameters; $$->params.push_back($1); }
+	  | paramlist ',' vardef { $1->params.push_back($3); }
 	  ;
 
-type : INT
-     | STR
-     ;
+primitive : INT { $$ = 0; }
+	  | STR { $$ = 1; }
+	  ;
 
-semtype : type
-	| semtype ',' type
+semtype : primitive { $$.func = 0; $$.slots = $1; }
+	| semtype ',' primitive { $1.func = 1; $1.slots |= $3 << ++$1.arity; }
 	;
