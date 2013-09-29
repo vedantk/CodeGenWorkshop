@@ -3,9 +3,15 @@
 #include <stdlib.h>
 #include "parse.tab.hh"
 
-int yywrap(void) 
+int yywrap(void)
 {
 	return 1;
+}
+
+void setlval(void* ptr)
+{
+	void** target = (void**) &yylval;
+	*target = ptr;
 }
 %}
 
@@ -21,10 +27,10 @@ PRIM	[\+\-\*/=\[\]<>()!,]
 "int"	{ return INT; }
 "str"	{ return STR; }
 
-{ID}	{ yylval = yytext; return ID; }
-{INT}	{ yylval = atoi(yytext); return NUMBER; }
+{ID}	{ setlval(yytext); return ID; }
+{INT}	{ setlval((void*) atol(yytext)); return NUMBER; }
 {PRIM}	{ return yytext[0]; }
-'[^']*'	{ yylval = yytext; return STRING; }
+'[^']*'	{ setlval(yytext); return STRING; }
 
 [ \n\t] { /* Discard whitespace. */ }
 .	{ printf("Unexpected lexeme: %s\n", yytext); }

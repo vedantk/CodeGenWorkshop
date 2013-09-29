@@ -1,7 +1,13 @@
-all: parse.tab.cc lex.yy.c
+CC = clang
+CXX = clang++
+CXXFLAGS = -g -Wall -Wextra -std=c++11
 
-parse.tab.cc: parse.yy 
-	bison -r all $^ -W --defines
+jit: jit.cc lex.yy.o parse.tab.o
 
-lex.yy.c: lex.l
+lex.yy.o: lex.l
 	flex $^
+	$(CC) -c lex.yy.c -o $@
+
+parse.tab.o: parse.yy lex.yy.o
+	bison -r all $< -W --defines
+	$(CXX) -c parse.tab.cc -o $@
