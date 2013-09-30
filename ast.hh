@@ -7,18 +7,25 @@
 #include "llvm/IR/Value.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Function.h"
 
+/*
+ * Frames enable variable allocation, lookup, and capture.
+ */
 struct Frame
 {
     llvm::StringMap<size_t> slots;
-    std::vector<llvm::AllocaInst*> bindings;
+    std::vector<llvm::Value*> bindings;
 
-    Frame(Frame* parent);
-    ~Frame();
+    Frame() {}
+    Frame(Frame* parent, llvm::Value* closure);
+
+    llvm::Value* CaptureClosure(llvm::Function* F);
+    void InjectBinding(llvm::Value* AI, llvm::StringRef id);
 };
 
 /*
- * The Expr interface helps implement codegen.
+ * The Expr interface ties AST construction and codegen together.
  */
 struct Expr
 {
@@ -112,7 +119,7 @@ struct Parameters
 
 struct FuncDef : public Expr 
 {
-    Frame* frame;
+    llvm::Function* F;
     Parameters* params;
     Block* block;
 

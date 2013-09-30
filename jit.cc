@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string>
 
 #include "ast.hh"
 #include "parse.tab.hh"
@@ -25,18 +26,34 @@ extern "C" int yylex(void);
 
 FuncDef* Program;
 static Module* TheModule;
-static Frame RootClosure(NULL);
+static Frame RootClosure;
+static ExecutionEngine* Exec;
 static IRBuilder<> Builder(getGlobalContext());
 static FunctionPassManager* TheFPM;
 static Type* Int64Ty = Type::getInt64Ty(getGlobalContext());
+static Type* Int64PtrTy = Type::getInt64PtrTy(getGlobalContext());
+static Function* MallocF;
 
 /*
- * In order to compare or perform arithmetic on expressions, we will discard
- * some type information and lower them to 64-bit integers.
+ * Arithmetic and comparisons require matching types. We can lower
+ * some of our expressions into qwords for simplicity.
  */
 static Value* lower(Expr* e, Frame* frame)
 {
     return Builder.CreateIntCast(e->CodeGen(frame), Int64Ty, true, "lower");
+}
+
+/*
+ * Function arguments and closures need to behave predictably.
+ */
+static Value* raise(Expr* e, Frame* frame)
+{
+    return Builder.CreatePointerCast(e->CodeGen(frame), Int64PtrTy, "raise");
+}
+
+static Value* getInt(int64_t n)
+{
+    return ConstantInt::get(getGlobalContext(), APInt(64, n, true));
 }
 
 Value* Ident::CodeGen(Frame* frame)
@@ -68,47 +85,115 @@ Value* Block::CodeGen(Frame* frame)
     return exprs.back()->CodeGen(frame);
 }
 
-Frame::Frame(Frame* parent)
-{}
-
-Frame::~Frame()
-{}
-
 Value* FuncCall::CodeGen(Frame* frame)
 {
-    if (typeid(*func) != typeid(FuncDef)) {
-        printf("[FuncCall::CodeGen] Callee is not a FuncDef\n"); exit(1);
+    /* Load the closure. */
+    Value* closure = raise(func, frame);
+
+    /* Load arguments to callee. */
+    vector<Value*> ArgsV;
+    for (Expr* e : args->exprs) {
+        ArgsV.push_back(raise(e, frame));
     }
-    puts("FuncCall");
-    return NULL;
+    ArgsV.push_back(closure);
+
+    /* Bitcast the closure to match the call signature. */
+    vector<Type*> Pointers(ArgsV.size(), Int64PtrTy);
+    FunctionType* FT = FunctionType::get(Int64PtrTy, Pointers, false);
+    Value* fptr = Builder.CreateBitCast(closure, FT, "fcast");
+
+    return Builder.CreateCall(fptr, ArgsV, "fcall");
 }
 
-Value* FuncDef::CodeGen(Frame* frame)
+void Frame::InjectBinding(llvm::Value* AI, StringRef id)
 {
-    puts("FuncDef");
-    return NULL;
+    slots[id] = bindings.size();
+    bindings.push_back(AI);
+}
+
+/*
+ * Allocate space for a 64-bit integer in the Function entry block.
+ */
+static Value* stack_alloc(Frame* frame, Function* F, StringRef id)
+{
+    if (frame->slots.count(id)) {
+        return frame->bindings[frame->slots.lookup(id)];
+    }
+
+    IRBuilder<> allocaBuilder(&F->getEntryBlock(), F->getEntryBlock().begin());
+    Value* alloca = allocaBuilder.CreateAlloca(Int64Ty, 0, id);
+    frame->InjectBinding(alloca, id);
+    return alloca;
+}
+
+Frame::Frame(Frame* parent, Value* closure)
+{
+    for (auto it = parent->slots.begin(); it != parent->slots.end(); ++it) {
+        slots[it->getKey()] = it->getValue();
+    }
+    for (size_t idx=0; idx < parent->bindings.size(); ++idx) {
+        bindings.push_back(Builder.CreateConstGEP1_32(closure, idx+1, "ld"));
+    }
+}
+
+/*
+ * Heap-allocate a closure and copy our frame into it.
+ */
+Value* Frame::CaptureClosure(Function* F)
+{
+    int N = bindings.size() + 1;
+    Value* closure = Builder.CreateCall(MallocF, getInt(N), "framealloc");
+    Builder.CreateStore(Builder.CreateBitCast(F, Int64PtrTy), closure);
+    for (int i=1; i < N; ++i) {
+        Builder.CreateStore(Builder.CreateLoad(bindings[i-1], "ld"),
+                            Builder.CreateConstGEP1_32(closure, i, "binding"));
+    }
+    return closure;
+}
+
+Value* FuncDef::CodeGen(Frame* parent)
+{
+    /* Construct the prototype for the lambda. */
+    vector<Type*> Pointers(params->params.size() + 1, Int64PtrTy);
+    FunctionType* FT = FunctionType::get(Int64PtrTy, Pointers, false);
+    F = Function::Create(FT, Function::ExternalLinkage, "lambda", TheModule);
+
+    /* Construct an entry block. */
+    BasicBlock *BB = BasicBlock::Create(getGlobalContext(), "entry", F);
+    Builder.SetInsertPoint(BB);
+
+    /* Generate a new frame that performs lookups in the enclosing closure. */
+    Value* env = &F->getArgumentList().back();
+    Frame* child = new Frame(parent, env);
+
+    /* Stack-allocate our parameters and load their Argument values. */
+    size_t idx = 0;
+    for (auto AI = F->arg_begin(); AI != F->arg_end(); ++AI, ++idx) {
+        StringRef name = idx < params->params.size() ?
+            StringRef(params->params[idx]) : StringRef("$closure");
+        AI->setName(name);
+        Value* alloc = stack_alloc(child, F, name);
+        Builder.CreateStore(AI, alloc);
+    }
+
+    /* Construct the function body. */
+    Builder.CreateRet(raise(block, child));
+    verifyFunction(*F);
+    TheFPM->run(*F);
+
+    return parent->CaptureClosure(F);
 }
 
 Value* Assignment::CodeGen(Frame* frame)
 {
-    /* Find the reference to our mutable variable. */
-    AllocaInst* alloc;
-    if (frame->slots.count(id)) {
-        alloc = frame->bindings[frame->slots.lookup(id)];
-    } else {
-        /* Stack-allocate a variable in the entry block if we need to. */
-        Function* TheFunction = Builder.GetInsertBlock()->getParent();
-        IRBuilder<> allocaBuilder(&TheFunction->getEntryBlock(),
-                                TheFunction->getEntryBlock().begin());
-        alloc = allocaBuilder.CreateAlloca(Int64Ty, 0, id);
-        frame->slots[id] = frame->bindings.size();
-        frame->bindings.push_back(alloc);
-    }
+    /* Find (or create!) the reference to our mutable variable. */
+    Function* TheFunction = Builder.GetInsertBlock()->getParent();
+    Value* alloc = stack_alloc(frame, TheFunction, id);
 
     /* Store into the alloca. */
-    Value* val = value->CodeGen(frame);
-    Builder.CreateStore(val, alloc);
-    return val;
+    Value* V = lower(value, frame);
+    Builder.CreateStore(V, alloc);
+    return V;
 }
 
 Value* UnaryOp::CodeGen(Frame* frame)
@@ -139,9 +224,7 @@ Value* BinaryOp::CodeGen(Frame* frame)
 Value* IfElse::CodeGen(Frame* frame)
 {
     /* Compare the conditional test expression to 0. */
-    Value* cond = Builder.CreateICmpNE(lower(test, frame),
-            ConstantInt::get(getGlobalContext(), APInt(64, 0, true)),
-            "ifcond");
+    Value* cond = Builder.CreateICmpNE(lower(test, frame), getInt(0), "ifcond");
 
     /* Generate blocks for the consequent, alternate, and phi branches. */
     Function* TheFunction = Builder.GetInsertBlock()->getParent();
@@ -178,11 +261,55 @@ void yyerror(char const* arg)
     printf("yyerror: %s\n", arg);
 }
 
+/*
+ * Code has been liberally stolen from the Kaleidoscope tutorial:
+ *
+ *                  http://llvm.org/docs/tutorial/
+ */
 int main()
 {
+    /* Initialize the JIT and set up an optimization pipeline. */
+    InitializeNativeTarget();
+    LLVMContext &Context = getGlobalContext();
+
+    TheModule = new Module("my cool jit", Context);
+
+    string ErrStr;
+    Exec = EngineBuilder(TheModule).setErrorStr(&ErrStr).create();
+    if (!Exec) {
+        printf("Could not create ExecutionEngine: %s\n", ErrStr.c_str());
+        exit(1);
+    }
+
+    FunctionPassManager OurFPM(TheModule);
+    OurFPM.add(new DataLayout(*Exec->getDataLayout()));
+    OurFPM.add(createBasicAliasAnalysisPass());
+    OurFPM.add(createPromoteMemoryToRegisterPass());
+    OurFPM.add(createInstructionCombiningPass());
+    OurFPM.add(createReassociatePass());
+    OurFPM.add(createGVNPass());
+    OurFPM.add(createCFGSimplificationPass());
+    OurFPM.doInitialization();
+    TheFPM = &OurFPM;
+
+    /* Link malloc into the module. */
+    vector<Type*> MallocArgs(1, Int64Ty);
+    FunctionType* MallocFT = FunctionType::get(Int64PtrTy, MallocArgs, false);
+    MallocF = Function::Create(MallocFT, Function::ExternalLinkage,
+                               "malloc", TheModule);
+    MallocF->setCallingConv(CallingConv::C);
+
+    /* Parse, codegen, and execute a program. */
     yyin = stdin;
     yyparse();
     Program->CodeGen(&RootClosure);
+    void* entry = Exec->getPointerToFunction(Program->F);
+    int64_t (*i64entry)(void*) = (int64_t (*)(void*)) entry;
+    int64_t result = i64entry(NULL);
+    printf(":: %ld\n", result);
+
+    TheModule->dump();
+
     delete Program;
     return 0;
 }
