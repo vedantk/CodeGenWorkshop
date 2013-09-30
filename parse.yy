@@ -36,7 +36,7 @@ exprs : expr { $$ = new Block; $$->exprs.push_back($1); }
       | exprs expr { $1->exprs.push_back($2); }
       ;
 
-expr :'(' expr ')' { $$ = $2; }
+expr : '(' expr ')' { $$ = $2; }
      | ID { $$ = (Expr*) new Ident($1); }
      | NUMBER { $$ = (Expr*) new Number($1); }
      | STRING { $$ = (Expr*) new String($1); }
