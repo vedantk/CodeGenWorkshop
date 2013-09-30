@@ -1,22 +1,72 @@
 #pragma once
 
+#include <vector>
 #include <stdint.h>
 #include <stdlib.h>
 
-#include <list>
-#include <llvm/IR/Value.h>
+#include "llvm/IR/Value.h"
+#include "llvm/ADT/StringMap.h"
+#include "llvm/IR/Instructions.h"
 
-using namespace std;
+struct Frame
+{
+    llvm::StringMap<size_t> slots;
+    std::vector<llvm::AllocaInst*> bindings;
 
+    Frame(Frame* parent);
+    ~Frame();
+};
+
+/*
+ * The Expr interface helps implement codegen.
+ */
 struct Expr
 {
     virtual ~Expr() {}
-    virtual llvm::Value* CodeGen() { return NULL; }
+    virtual llvm::Value* CodeGen(Frame* frame) = 0;
+};
+
+struct Ident : public Expr
+{
+    llvm::StringRef id;
+
+    Ident(char* _str)
+        : id(llvm::StringRef((const char*) _str))
+    {}
+
+    virtual llvm::Value* CodeGen(Frame* frame);
+};
+
+struct Number : public Expr
+{
+    int64_t num;
+
+    Number(int64_t n)
+        : num(n)
+    {}
+
+    virtual llvm::Value* CodeGen(Frame* frame);
+};
+
+struct String : public Expr
+{
+    char* str;
+
+    String(char* _str)
+        : str(_str)
+    {}
+
+    ~String() 
+    {
+        free(str);
+    }
+
+    virtual llvm::Value* CodeGen(Frame* frame);
 };
 
 struct Block : public Expr
 {
-    list<Expr*> exprs;
+    std::vector<Expr*> exprs;
 
     Block() {};
 
@@ -27,7 +77,7 @@ struct Block : public Expr
         }
     }
 
-    llvm::Value* CodeGen();
+    virtual llvm::Value* CodeGen(Frame* frame);
 };
 
 struct FuncCall : public Expr 
@@ -45,7 +95,7 @@ struct FuncCall : public Expr
         delete args;
     }
 
-    llvm::Value* CodeGen();
+    virtual llvm::Value* CodeGen(Frame* frame);
 };
 
 struct sem_type 
@@ -57,22 +107,22 @@ struct sem_type
 
 struct VarDef
 {
-    char* name;
+    llvm::StringRef id;
     sem_type type;
 
     VarDef(char* _name, sem_type _type)
-        : name(_name), type(_type)
+        : id(llvm::StringRef((const char*) _name)), type(_type)
     {}
 
     ~VarDef()
     {
-        free(name);
+        free((void*) id.data());
     }
 };
 
 struct Parameters
 {
-    list<VarDef*> params;
+    std::vector<VarDef*> params;
 
     ~Parameters()
     {
@@ -84,6 +134,7 @@ struct Parameters
 
 struct FuncDef : public Expr 
 {
+    Frame* frame;
     Parameters* params;
     Block* block;
 
@@ -97,7 +148,7 @@ struct FuncDef : public Expr
         delete block;
     }
 
-    llvm::Value* CodeGen();
+    virtual llvm::Value* CodeGen(Frame* frame);
 };
 
 struct Assignment : public Expr
@@ -115,7 +166,7 @@ struct Assignment : public Expr
         delete value;
     }
 
-    llvm::Value* CodeGen();
+    virtual llvm::Value* CodeGen(Frame* frame);
 };
 
 struct UnaryOp : public Expr 
@@ -132,7 +183,7 @@ struct UnaryOp : public Expr
         delete arg;
     }
 
-    llvm::Value* CodeGen();
+    virtual llvm::Value* CodeGen(Frame* frame);
 };
 
 struct BinaryOp : public Expr
@@ -150,7 +201,7 @@ struct BinaryOp : public Expr
         delete rhs;
     }
 
-    llvm::Value* CodeGen();
+    virtual llvm::Value* CodeGen(Frame* frame);
 };
 
 struct IfElse : public Expr
@@ -169,52 +220,23 @@ struct IfElse : public Expr
         delete alternate;
     }
 
-    llvm::Value* CodeGen();
+    virtual llvm::Value* CodeGen(Frame* frame);
 };
 
-struct Number : public Expr
-{
-    int64_t num;
-
-    Number(int64_t n)
-        : num(n)
-    {}
-
-    llvm::Value* CodeGen();
-};
-
-struct String : public Expr
-{
-    char* str;
-
-    String(char* _str)
-        : str(_str)
-    {}
-
-    ~String() 
-    {
-        free(str);
-    }
-
-    llvm::Value* CodeGen();
-};
-
+/*
+ * The parser generator uses a type union to manage semantic values.
+ */
 union semval {
-	Expr* expr;
-	Number* num;
-	String* str;
-	IfElse* ifelse;
-	FuncCall* fcall;
-	BinaryOp* binop;
-	UnaryOp* unop;
-	FuncDef* funcdef;
-	Assignment* asgn;
-	VarDef* vardef;
-	Block* exprs;
+    Expr* expr;
+    VarDef* vardef;
+    Block* exprs;
     Parameters* params;
     sem_type type;
     int podint;
     char* podstr;
 };
 
-extern Block* program;
+/*
+ * We treat compilation units as functions in order to simplify codegen.
+ */
+extern FuncDef* Program;

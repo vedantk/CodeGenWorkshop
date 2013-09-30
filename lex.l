@@ -17,7 +17,7 @@ void setlval(void* ptr)
 
 ID	[a-zA-Z][a-zA-Z0-9_]*
 INT	-?[0-9]+
-PRIM	[\+\-\*/=\[\]<>()!,]
+PRIM	[\+\-\*/=\[\]<>()!,{}]
 
 %%
 
@@ -33,6 +33,7 @@ PRIM	[\+\-\*/=\[\]<>()!,]
 '[^']*'	{ setlval(strdup(yytext)); return STRING; }
 
 [ \n\t] { /* Discard whitespace. */ }
-.	{ printf("Unexpected lexeme: %s\n", yytext); }
+
+.	{ printf("[lex.l] Unexpected lexeme: %s\n", yytext); }
 
 %%

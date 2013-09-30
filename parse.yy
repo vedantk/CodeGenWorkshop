@@ -29,16 +29,17 @@ extern void yyerror(char const *);
 %precedence '!'
 
 %%
-program : exprs { program = $1; }
+program : exprs { Program = new FuncDef(new Parameters, $1); }
 	;
 
 exprs : expr { $$ = new Block; $$->exprs.push_back($1); }
       | exprs expr { $1->exprs.push_back($2); }
       ;
 
-expr : NUMBER { $$ = (Expr*) new Number($1); }
+expr :'(' expr ')' { $$ = $2; }
+     | ID { $$ = (Expr*) new Ident($1); }
+     | NUMBER { $$ = (Expr*) new Number($1); }
      | STRING { $$ = (Expr*) new String($1); }
-     | '(' expr ')' { $$ = $2; }
      | '!' expr { $$ = (Expr*) new UnaryOp('!', $2); }
      | expr '+' expr { $$ = (Expr*) new BinaryOp('+', $1, $3); }
      | expr '-' expr { $$ = (Expr*) new BinaryOp('-', $1, $3); }
@@ -70,5 +71,5 @@ primitive : INT { $$ = 0; }
 	  ;
 
 semtype : primitive { $$.func = 0; $$.slots = $1; }
-	| semtype ',' primitive { $1.func = 1; $1.slots |= $3 << ++$1.arity; }
+	| semtype ',' primitive { $1.func = 1; $1.slots |= $3 << ($1.arity++); }
 	;
