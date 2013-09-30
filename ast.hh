@@ -98,36 +98,14 @@ struct FuncCall : public Expr
     virtual llvm::Value* CodeGen(Frame* frame);
 };
 
-struct sem_type 
-{
-    uint32_t func : 1;
-    uint32_t arity : 7;
-    uint32_t slots : 24;
-};
-
-struct VarDef
-{
-    llvm::StringRef id;
-    sem_type type;
-
-    VarDef(char* _name, sem_type _type)
-        : id(llvm::StringRef((const char*) _name)), type(_type)
-    {}
-
-    ~VarDef()
-    {
-        free((void*) id.data());
-    }
-};
-
 struct Parameters
 {
-    std::vector<VarDef*> params;
+    std::vector<char*> params;
 
     ~Parameters()
     {
-        for (VarDef* p : params) {
-            delete p;
+        for (char* i : params) {
+            free(i);
         }
     }
 };
@@ -153,16 +131,16 @@ struct FuncDef : public Expr
 
 struct Assignment : public Expr
 {
-    VarDef* decl;
+    llvm::StringRef id;
     Expr* value;
 
-    Assignment(VarDef* _decl, Expr* _value)
-        : decl(_decl), value(_value)
+    Assignment(char* _id, Expr* _value)
+        : id(llvm::StringRef((const char*) _id)), value(_value)
     {}
 
     ~Assignment()
     {
-        delete decl;
+        free((void*) id.data());
         delete value;
     }
 
@@ -228,10 +206,9 @@ struct IfElse : public Expr
  */
 union semval {
     Expr* expr;
-    VarDef* vardef;
     Block* exprs;
     Parameters* params;
-    sem_type type;
+    FuncDef* funcdef;
     int podint;
     char* podstr;
 };

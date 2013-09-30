@@ -18,21 +18,20 @@ void setlval(void* ptr)
 ID	[a-zA-Z][a-zA-Z0-9_]*
 INT	-?[0-9]+
 PRIM	[\+\-\*/=\[\]<>()!,{}]
+NOISE	[ \n\t,;]
 
 %%
 
 "if"	{ return IF; }
 "else"	{ return ELSE; }
 ":="	{ return SET; }
-"int"	{ return INT; }
-"str"	{ return STR; }
 
 {ID}	{ setlval(strdup(yytext)); return ID; }
 {INT}	{ setlval((void*) atol(yytext)); return NUMBER; }
 {PRIM}	{ return yytext[0]; }
 '[^']*'	{ setlval(strdup(yytext)); return STRING; }
 
-[ \n\t] { /* Discard whitespace. */ }
+{NOISE}	{ }
 
 .	{ printf("[lex.l] Unexpected lexeme: %s\n", yytext); }
 

@@ -10,14 +10,12 @@ extern void yyerror(char const *);
 
 %define api.value.type {union semval}
 
-%token NUMBER ID STRING INT STR IF ELSE SET 
+%token NUMBER ID STRING IF ELSE SET 
 
-%type <exprs> program exprs block
+%type <funcdef> program funcdef
+%type <exprs> exprs block
 %type <expr> expr
-%type <type> semtype
-%type <podint> primitive
-%type <vardef> vardef
-%type <params> params paramlist
+%type <params> params 
 %type <podint> NUMBER
 %type <podstr> ID STRING
 
@@ -46,30 +44,19 @@ expr : '(' expr ')' { $$ = $2; }
      | expr '*' expr { $$ = (Expr*) new BinaryOp('*', $1, $3); }
      | expr '/' expr { $$ = (Expr*) new BinaryOp('/', $1, $3); } 
      | expr '=' expr { $$ = (Expr*) new BinaryOp('=', $1, $3); }
-     | vardef SET expr { $$ = (Expr*) new Assignment($1, $3); }
+     | ID SET expr { $$ = (Expr*) new Assignment($1, $3); }
      | expr '[' exprs ']' { $$ = (Expr*) new FuncCall($1, $3); }
-     | '(' params ')' block { $$ = (Expr*) new FuncDef($2, $4); }
      | IF '(' expr ')' block ELSE block { $$ = (Expr*) new IfElse($3, $5, $7); }
+     | funcdef { $$ = (Expr*) $1; }
      ;
-
-vardef : ID '<' semtype '>' { $$ = new VarDef($1, $3); }
-       ;
 
 block : '{' exprs '}' { $$ = $2; }
       ;
 
-params : %empty { $$ = new Parameters; }
-       | paramlist { $$ = $1; }
+funcdef : '<' '>' '=' block { $$ = new FuncDef(new Parameters, $4); }
+        | '<' params '>' '=' block { $$ = new FuncDef($2, $5); } 
+        ;
+
+params : ID { $$ = new Parameters; $$->params.push_back($1); }
+       | params ID { $1->params.push_back($2); }
        ;
-
-paramlist : vardef { $$ = new Parameters; $$->params.push_back($1); }
-	  | paramlist ',' vardef { $1->params.push_back($3); }
-	  ;
-
-primitive : INT { $$ = 0; }
-	  | STR { $$ = 1; }
-	  ;
-
-semtype : primitive { $$.func = 0; $$.slots = $1; }
-	| semtype ',' primitive { $1.func = 1; $1.slots |= $3 << ($1.arity++); }
-	;

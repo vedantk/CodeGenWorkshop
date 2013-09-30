@@ -93,15 +93,15 @@ Value* Assignment::CodeGen(Frame* frame)
 {
     /* Find the reference to our mutable variable. */
     AllocaInst* alloc;
-    if (frame->slots.count(decl->id)) {
-        alloc = frame->bindings[frame->slots.lookup(decl->id)];
+    if (frame->slots.count(id)) {
+        alloc = frame->bindings[frame->slots.lookup(id)];
     } else {
         /* Stack-allocate a variable in the entry block if we need to. */
         Function* TheFunction = Builder.GetInsertBlock()->getParent();
         IRBuilder<> allocaBuilder(&TheFunction->getEntryBlock(),
                                 TheFunction->getEntryBlock().begin());
-        alloc = allocaBuilder.CreateAlloca(Int64Ty, 0, decl->id);
-        frame->slots[decl->id] = frame->bindings.size();
+        alloc = allocaBuilder.CreateAlloca(Int64Ty, 0, id);
+        frame->slots[id] = frame->bindings.size();
         frame->bindings.push_back(alloc);
     }
 
