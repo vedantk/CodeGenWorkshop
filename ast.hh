@@ -21,7 +21,6 @@ struct Frame
     Frame(Frame* parent, llvm::Value* closure);
 
     llvm::Value* CaptureClosure(llvm::Function* F);
-    void InjectBinding(llvm::Value* AI, llvm::StringRef id);
 };
 
 /*

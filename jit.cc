@@ -96,15 +96,9 @@ Value* FuncCall::CodeGen(Frame* frame)
     /* Bitcast the closure to match the call signature. */
     vector<Type*> Pointers(ArgsV.size(), Int64PtrTy);
     FunctionType* FT = FunctionType::get(Int64PtrTy, Pointers, false);
-    Value* fptr = Builder.CreateBitCast(closure, FT, "fcast");
-
+    Value* fptr = coerce(Builder.CreateLoad(closure, "loadfptr"), 1);
+    fptr = Builder.CreateBitCast(fptr, PointerType::get(FT, 0), "fcast");
     return Builder.CreateCall(fptr, ArgsV, "fcall");
-}
-
-void Frame::InjectBinding(llvm::Value* AI, StringRef id)
-{
-    slots[id] = bindings.size();
-    bindings.push_back(AI);
 }
 
 /*
@@ -120,7 +114,8 @@ static Value* stack_alloc(Frame* frame, Function* F, StringRef id)
     Value* alloca = allocaBuilder.CreateAlloca(Int64Ty, 0, id);
 
     if (frame) {
-        frame->InjectBinding(alloca, id);
+        frame->slots[id] = frame->bindings.size();
+        frame->bindings.push_back(alloca);
     }
 
     return alloca;
@@ -136,26 +131,10 @@ Frame::Frame(Frame* parent, Value* closure)
     }
 }
 
-/*
- * Heap-allocate a closure and copy our frame into it.
- */
-Value* Frame::CaptureClosure(Function* F)
-{
-    int N = bindings.size() + 1;
-    Value* closure = Builder.CreateCall(MallocF, getInt(N), "framealloc");
-
-    /* Store cast(F -> i64*) => cast(malloc() -> i64**). */
-    Builder.CreateStore(Builder.CreateBitCast(F, Int64PtrTy),
-            Builder.CreateBitCast(closure, PointerType::get(Int64PtrTy, 0)));
-    for (int i=1; i < N; ++i) {
-        Builder.CreateStore(Builder.CreateLoad(bindings[i-1], "ld"),
-                            Builder.CreateConstGEP1_32(closure, i, "slot"));
-    }
-    return closure;
-}
-
 Value* FuncDef::CodeGen(Frame* parent)
 {
+    auto ip = Builder.saveIP();
+
     /* Construct the prototype for the lambda. */
     vector<Type*> Pointers(params->params.size() + 1, Int64PtrTy);
     FunctionType* FT = FunctionType::get(Int64PtrTy, Pointers, false);
@@ -167,7 +146,7 @@ Value* FuncDef::CodeGen(Frame* parent)
 
     /* Generate a new frame that performs lookups in the enclosing closure. */
     Value* env = &F->getArgumentList().back();
-    StringRef name = StringRef("$frame");
+    StringRef name = StringRef("__closure__");
     Value* env_alloc = stack_alloc(NULL, F, name);
     Builder.CreateStore(coerce(env, 0), env_alloc);
     Frame* child = new Frame(parent, env_alloc);
@@ -176,10 +155,10 @@ Value* FuncDef::CodeGen(Frame* parent)
     size_t idx = 0;
     for (auto AI = F->arg_begin(); AI != F->arg_end(); ++AI, ++idx) {
         if (idx < params->params.size()) {
-            StringRef name = StringRef(params->params[idx]);
+            name = StringRef(params->params[idx]);
             AI->setName(name);
             Value* alloc = stack_alloc(child, F, name);
-            Builder.CreateStore(AI, alloc);
+            Builder.CreateStore(coerce(AI, 0), alloc);
         } 
     }
 
@@ -188,7 +167,27 @@ Value* FuncDef::CodeGen(Frame* parent)
     verifyFunction(*F);
     TheFPM->run(*F);
 
+    Builder.restoreIP(ip);
     return parent->CaptureClosure(F);
+}
+
+/*
+ * Heap-allocate a closure and copy our frame into it.
+ */
+Value* Frame::CaptureClosure(Function* F)
+{
+    int N = bindings.size() + 1;
+    Value* closure = Builder.CreateCall(MallocF, getInt(sizeof(void*) * N), 
+                                        "framealloc");
+
+    /* Store cast(F -> i64*) => cast(malloc() -> i64**). */
+    Builder.CreateStore(Builder.CreateBitCast(F, Int64PtrTy),
+            Builder.CreateBitCast(closure, PointerType::get(Int64PtrTy, 0)));
+    for (int i=1; i < N; ++i) {
+        Builder.CreateStore(Builder.CreateLoad(bindings[i-1], "ld"),
+                            Builder.CreateConstGEP1_32(closure, i, "slot"));
+    }
+    return closure;
 }
 
 Value* Assignment::CodeGen(Frame* frame)
@@ -197,7 +196,6 @@ Value* Assignment::CodeGen(Frame* frame)
     Function* TheFunction = Builder.GetInsertBlock()->getParent();
     Value* alloc = stack_alloc(frame, TheFunction, id);
 
-    /* Store into the alloca. */
     Value* V = coerce(value->CodeGen(frame), 0);
     Builder.CreateStore(V, alloc);
     return V;
@@ -312,8 +310,8 @@ int main()
     yyparse();
 
     if (sizeof(void*) != sizeof(int64_t)) {
-        printf("For simplicity, type coercion is not "
-               "supported on this architecture.\n"); exit(1);
+        printf("For simplicity, type coercion is not supported "
+               "on this architecture.\n"); exit(1);
     }
 
     Program->CodeGen(&RootClosure);
