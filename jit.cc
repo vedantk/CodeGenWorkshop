@@ -1,6 +1,5 @@
-#include <stdio.h>
-#include <stdlib.h>
 #include <string>
+#include <stdio.h>
 
 #include "ast.hh"
 #include "parse.tab.hh"
@@ -35,20 +34,17 @@ static Type* Int64PtrTy = Type::getInt64PtrTy(getGlobalContext());
 static Function* MallocF;
 
 /*
- * Arithmetic and comparisons require matching types. We can lower
- * some of our expressions into qwords for simplicity.
+ * Cast values into the right format. 
  */
-static Value* lower(Expr* e, Frame* frame)
+static Value* coerce(Value* V, int level)
 {
-    return Builder.CreateIntCast(e->CodeGen(frame), Int64Ty, true, "lower");
-}
-
-/*
- * Function arguments and closures need to behave predictably.
- */
-static Value* raise(Expr* e, Frame* frame)
-{
-    return Builder.CreatePointerCast(e->CodeGen(frame), Int64PtrTy, "raise");
+    switch (level) {
+    case 0: return Builder.CreatePtrToInt(V, Int64Ty);
+    case 1: return Builder.CreateIntToPtr(V, Int64PtrTy);
+    case 2: 
+        return Builder.CreatePointerCast(V, PointerType::get(Int64PtrTy, 0));
+    }
+    printf("coerce: Invalid coercion level\n"); exit(1);
 }
 
 static Value* getInt(int64_t n)
@@ -88,12 +84,12 @@ Value* Block::CodeGen(Frame* frame)
 Value* FuncCall::CodeGen(Frame* frame)
 {
     /* Load the closure. */
-    Value* closure = raise(func, frame);
+    Value* closure = coerce(func->CodeGen(frame), 1);
 
     /* Load arguments to callee. */
     vector<Value*> ArgsV;
     for (Expr* e : args->exprs) {
-        ArgsV.push_back(raise(e, frame));
+        ArgsV.push_back(coerce(e->CodeGen(frame), 1));
     }
     ArgsV.push_back(closure);
 
@@ -116,13 +112,17 @@ void Frame::InjectBinding(llvm::Value* AI, StringRef id)
  */
 static Value* stack_alloc(Frame* frame, Function* F, StringRef id)
 {
-    if (frame->slots.count(id)) {
+    if (frame && frame->slots.count(id)) {
         return frame->bindings[frame->slots.lookup(id)];
     }
 
     IRBuilder<> allocaBuilder(&F->getEntryBlock(), F->getEntryBlock().begin());
     Value* alloca = allocaBuilder.CreateAlloca(Int64Ty, 0, id);
-    frame->InjectBinding(alloca, id);
+
+    if (frame) {
+        frame->InjectBinding(alloca, id);
+    }
+
     return alloca;
 }
 
@@ -143,10 +143,13 @@ Value* Frame::CaptureClosure(Function* F)
 {
     int N = bindings.size() + 1;
     Value* closure = Builder.CreateCall(MallocF, getInt(N), "framealloc");
-    Builder.CreateStore(Builder.CreateBitCast(F, Int64PtrTy), closure);
+
+    /* Store cast(F -> i64*) => cast(malloc() -> i64**). */
+    Builder.CreateStore(Builder.CreateBitCast(F, Int64PtrTy),
+            Builder.CreateBitCast(closure, PointerType::get(Int64PtrTy, 0)));
     for (int i=1; i < N; ++i) {
         Builder.CreateStore(Builder.CreateLoad(bindings[i-1], "ld"),
-                            Builder.CreateConstGEP1_32(closure, i, "binding"));
+                            Builder.CreateConstGEP1_32(closure, i, "slot"));
     }
     return closure;
 }
@@ -164,20 +167,24 @@ Value* FuncDef::CodeGen(Frame* parent)
 
     /* Generate a new frame that performs lookups in the enclosing closure. */
     Value* env = &F->getArgumentList().back();
-    Frame* child = new Frame(parent, env);
+    StringRef name = StringRef("$frame");
+    Value* env_alloc = stack_alloc(NULL, F, name);
+    Builder.CreateStore(coerce(env, 0), env_alloc);
+    Frame* child = new Frame(parent, env_alloc);
 
     /* Stack-allocate our parameters and load their Argument values. */
     size_t idx = 0;
     for (auto AI = F->arg_begin(); AI != F->arg_end(); ++AI, ++idx) {
-        StringRef name = idx < params->params.size() ?
-            StringRef(params->params[idx]) : StringRef("$closure");
-        AI->setName(name);
-        Value* alloc = stack_alloc(child, F, name);
-        Builder.CreateStore(AI, alloc);
+        if (idx < params->params.size()) {
+            StringRef name = StringRef(params->params[idx]);
+            AI->setName(name);
+            Value* alloc = stack_alloc(child, F, name);
+            Builder.CreateStore(AI, alloc);
+        } 
     }
 
     /* Construct the function body. */
-    Builder.CreateRet(raise(block, child));
+    Builder.CreateRet(coerce(block->CodeGen(child), 1));
     verifyFunction(*F);
     TheFPM->run(*F);
 
@@ -191,14 +198,14 @@ Value* Assignment::CodeGen(Frame* frame)
     Value* alloc = stack_alloc(frame, TheFunction, id);
 
     /* Store into the alloca. */
-    Value* V = lower(value, frame);
+    Value* V = coerce(value->CodeGen(frame), 0);
     Builder.CreateStore(V, alloc);
     return V;
 }
 
 Value* UnaryOp::CodeGen(Frame* frame)
 {
-    Value* V = lower(arg, frame);
+    Value* V = coerce(arg->CodeGen(frame), 0);
     switch (op) {
         case '!': return Builder.CreateNot(V);
         default:
@@ -208,8 +215,8 @@ Value* UnaryOp::CodeGen(Frame* frame)
 
 Value* BinaryOp::CodeGen(Frame* frame)
 {
-    Value *L = lower(lhs, frame), 
-          *R = lower(rhs, frame);
+    Value *L = coerce(lhs->CodeGen(frame), 0), 
+          *R = coerce(rhs->CodeGen(frame), 0);
     switch (op) {
         case '+': return Builder.CreateAdd(L, R, "add");
         case '-': return Builder.CreateSub(L, R, "sub");
@@ -224,7 +231,8 @@ Value* BinaryOp::CodeGen(Frame* frame)
 Value* IfElse::CodeGen(Frame* frame)
 {
     /* Compare the conditional test expression to 0. */
-    Value* cond = Builder.CreateICmpNE(lower(test, frame), getInt(0), "ifcond");
+    Value* cond = Builder.CreateICmpNE(coerce(test->CodeGen(frame), 0), 
+                                       getInt(0), "ifcond");
 
     /* Generate blocks for the consequent, alternate, and phi branches. */
     Function* TheFunction = Builder.GetInsertBlock()->getParent();
@@ -302,13 +310,19 @@ int main()
     /* Parse, codegen, and execute a program. */
     yyin = stdin;
     yyparse();
+
+    if (sizeof(void*) != sizeof(int64_t)) {
+        printf("For simplicity, type coercion is not "
+               "supported on this architecture.\n"); exit(1);
+    }
+
     Program->CodeGen(&RootClosure);
+    TheModule->dump();
+
     void* entry = Exec->getPointerToFunction(Program->F);
     int64_t (*i64entry)(void*) = (int64_t (*)(void*)) entry;
     int64_t result = i64entry(NULL);
     printf(":: %ld\n", result);
-
-    TheModule->dump();
 
     delete Program;
     return 0;
