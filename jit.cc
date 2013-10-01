@@ -39,10 +39,10 @@ static Function* MallocF;
 static Value* coerce(Value* V, int level)
 {
     switch (level) {
-    case 0: return Builder.CreatePtrToInt(V, Int64Ty);
-    case 1: return Builder.CreateIntToPtr(V, Int64PtrTy);
-    case 2: 
-        return Builder.CreatePointerCast(V, PointerType::get(Int64PtrTy, 0));
+        case 0: return Builder.CreatePtrToInt(V, Int64Ty);
+        case 1: return Builder.CreateIntToPtr(V, Int64PtrTy);
+        case 2: return Builder.CreatePointerCast(V, 
+                               PointerType::get(Int64PtrTy, 0));
     }
     printf("coerce: Invalid coercion level\n"); exit(1);
 }
@@ -307,7 +307,9 @@ int main()
 
     /* Parse, codegen, and execute a program. */
     yyin = stdin;
-    yyparse();
+    if (yyparse()) {
+        printf("Parse error.\n"); exit(1);
+    }
 
     if (sizeof(void*) != sizeof(int64_t)) {
         printf("For simplicity, type coercion is not supported "

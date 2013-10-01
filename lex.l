@@ -18,6 +18,7 @@ void setlval(void* ptr)
 ID	[a-zA-Z][a-zA-Z0-9_]*
 INT	-?[0-9]+
 PRIM	[\+\-\*/=\[\]<>()!,{}]
+NOTE	;(.*)$
 NOISE	[ \n\t,;]
 
 %%
@@ -31,6 +32,7 @@ NOISE	[ \n\t,;]
 {PRIM}	{ return yytext[0]; }
 '[^']*'	{ setlval(strdup(yytext)); return STRING; }
 
+{NOTE}	{ }
 {NOISE}	{ }
 
 .	{ printf("[lex.l] Unexpected lexeme: %s\n", yytext); }
