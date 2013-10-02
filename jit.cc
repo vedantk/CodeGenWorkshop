@@ -40,9 +40,18 @@ static Value* coerce(Value* V, int level)
 {
     switch (level) {
         case 0: return Builder.CreatePtrToInt(V, Int64Ty);
-        case 1: return Builder.CreateIntToPtr(V, Int64PtrTy);
-        case 2: return Builder.CreatePointerCast(V, 
-                               PointerType::get(Int64PtrTy, 0));
+        case 1: 
+            if (isa<PointerType>(V->getType())) {
+                return Builder.CreatePointerCast(V, Int64PtrTy);
+            } else {
+                return Builder.CreateIntToPtr(V, Int64PtrTy);
+            }
+        case 2: 
+            if (!isa<PointerType>(V->getType())) {
+                V = coerce(V, 1);
+            }
+            return Builder.CreatePointerCast(V, 
+                        PointerType::get(Int64PtrTy, 0));
     }
     printf("coerce: Invalid coercion level\n"); exit(1);
 }
@@ -57,7 +66,8 @@ Value* Ident::CodeGen(Frame* frame)
     if (!frame->slots.count(id)) {
         printf("[Ident::CodeGen] Unbound identifier\n"); exit(1);
     }
-    return Builder.CreateLoad(frame->bindings[frame->slots.lookup(id)], id);
+    Value* V = Builder.CreateLoad(frame->bindings[frame->slots.lookup(id)], id);
+    return coerce(V, 1);
 }
 
 Value* Number::CodeGen(Frame* frame)
@@ -84,19 +94,19 @@ Value* Block::CodeGen(Frame* frame)
 Value* FuncCall::CodeGen(Frame* frame)
 {
     /* Load the closure. */
-    Value* closure = coerce(func->CodeGen(frame), 1);
+    Value* closure = coerce(func->CodeGen(frame), 2);
 
     /* Load arguments to callee. */
     vector<Value*> ArgsV;
     for (Expr* e : args->exprs) {
         ArgsV.push_back(coerce(e->CodeGen(frame), 1));
     }
-    ArgsV.push_back(closure);
+    ArgsV.push_back(coerce(closure, 1));
 
     /* Bitcast the closure to match the call signature. */
     vector<Type*> Pointers(ArgsV.size(), Int64PtrTy);
     FunctionType* FT = FunctionType::get(Int64PtrTy, Pointers, false);
-    Value* fptr = coerce(Builder.CreateLoad(closure, "loadfptr"), 1);
+    Value* fptr = Builder.CreateLoad(closure, "loadfptr");
     fptr = Builder.CreateBitCast(fptr, PointerType::get(FT, 0), "fcast");
     return Builder.CreateCall(fptr, ArgsV, "fcall");
 }
@@ -121,13 +131,19 @@ static Value* stack_alloc(Frame* frame, Function* F, StringRef id)
     return alloca;
 }
 
+/*
+ * Make an exact copy of the parent frame.
+ */
 Frame::Frame(Frame* parent, Value* closure)
 {
+    closure = coerce(closure, 2);
     for (auto it = parent->slots.begin(); it != parent->slots.end(); ++it) {
         slots[it->getKey()] = it->getValue();
     }
     for (size_t idx=0; idx < parent->bindings.size(); ++idx) {
-        bindings.push_back(Builder.CreateConstGEP1_32(closure, idx+1, "ld"));
+        /* Bindings are loaded from an i64** into an i64*. */
+        bindings.push_back(Builder.CreateConstGEP1_32(coerce(closure, 2), 
+                                                      idx+1, "ld"));
     }
 }
 
@@ -156,7 +172,6 @@ Value* FuncDef::CodeGen(Frame* parent)
 
     /* Generate a new frame that performs lookups in the enclosing closure. */
     Argument* closure_arg = &F->getArgumentList().back();
-    // Value* env_alloc = stack_alloc(NULL, F, closure_arg->getName());
     Frame* child = new Frame(parent, closure_arg);
 
     /* Stack-allocate our parameters and load their Argument values. */
@@ -172,12 +187,12 @@ Value* FuncDef::CodeGen(Frame* parent)
 
     /* Construct the function body. */
     Builder.CreateRet(coerce(block->CodeGen(child), 1));
-    verifyFunction(*F);
 
     printf("Function after body generation:\n");
     F->dump();
     printf("\n\n");
 
+    verifyFunction(*F);
     TheFPM->run(*F);
 
     Builder.restoreIP(ip);
@@ -185,22 +200,24 @@ Value* FuncDef::CodeGen(Frame* parent)
 }
 
 /*
- * Heap-allocate a closure and copy our frame into it.
+ * Heap-allocate a closure and copy our frame into it. This becomes the child
+ * frame passed into all invocations of a funcdef.
  */
 Value* Frame::CaptureClosure(Function* F)
 {
+    /* Emit a frame directly after a funcdef. */
     int N = bindings.size() + 1;
-    Value* closure = Builder.CreateCall(MallocF, getInt(sizeof(void*) * N), 
+    Value* falloc = Builder.CreateCall(MallocF, getInt(sizeof(void*) * N), 
                                         "framealloc");
 
     /* Store cast(F -> i64*) => cast(malloc() -> i64**). */
     Builder.CreateStore(Builder.CreateBitCast(F, Int64PtrTy),
-            Builder.CreateBitCast(closure, PointerType::get(Int64PtrTy, 0)));
+            Builder.CreateBitCast(falloc, PointerType::get(Int64PtrTy, 0)));
     for (int i=1; i < N; ++i) {
-        Builder.CreateStore(Builder.CreateLoad(bindings[i-1], "ld"),
-                            Builder.CreateConstGEP1_32(closure, i, "slot"));
+        Builder.CreateStore(coerce(Builder.CreateLoad(bindings[i-1], "ld"), 0),
+                            Builder.CreateConstGEP1_32(falloc, i, "slot"));
     }
-    return closure;
+    return falloc;
 }
 
 Value* Assignment::CodeGen(Frame* frame)
