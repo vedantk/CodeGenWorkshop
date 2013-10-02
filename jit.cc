@@ -181,17 +181,8 @@ Value* FuncDef::CodeGen(Frame* parent)
         Builder.CreateStore(coerce(AI, 0), alloc);
     }
 
-    printf("\nFunction before body generation:\n");
-    F->dump();
-    printf("\n\n");
-
     /* Construct the function body. */
     Builder.CreateRet(coerce(block->CodeGen(child), 1));
-
-    printf("Function after body generation:\n");
-    F->dump();
-    printf("\n\n");
-
     verifyFunction(*F);
     TheFPM->run(*F);
 
