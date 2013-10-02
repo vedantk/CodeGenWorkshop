@@ -111,7 +111,7 @@ static Value* stack_alloc(Frame* frame, Function* F, StringRef id)
     }
 
     IRBuilder<> allocaBuilder(&F->getEntryBlock(), F->getEntryBlock().begin());
-    Value* alloca = allocaBuilder.CreateAlloca(Int64Ty, 0, id);
+    Value* alloca = allocaBuilder.CreateAlloca(Int64Ty, 0, id + "alloca");
 
     if (frame) {
         frame->slots[id] = frame->bindings.size();
@@ -140,31 +140,44 @@ Value* FuncDef::CodeGen(Frame* parent)
     FunctionType* FT = FunctionType::get(Int64PtrTy, Pointers, false);
     F = Function::Create(FT, Function::ExternalLinkage, "lambda", TheModule);
 
+    /* Assign labels to the function arguments. */
+    size_t idx = 0;
+    for (auto AI = F->arg_begin(); AI != F->arg_end(); ++AI, ++idx) {
+        if (idx < params->params.size()) {
+            AI->setName(StringRef(params->params[idx]));
+        } else {
+            AI->setName(StringRef("__closure__"));
+        }
+    }
+
     /* Construct an entry block. */
     BasicBlock *BB = BasicBlock::Create(getGlobalContext(), "entry", F);
     Builder.SetInsertPoint(BB);
 
     /* Generate a new frame that performs lookups in the enclosing closure. */
-    Value* env = &F->getArgumentList().back();
-    StringRef name = StringRef("__closure__");
-    Value* env_alloc = stack_alloc(NULL, F, name);
-    Builder.CreateStore(coerce(env, 0), env_alloc);
-    Frame* child = new Frame(parent, env_alloc);
+    Argument* closure_arg = &F->getArgumentList().back();
+    // Value* env_alloc = stack_alloc(NULL, F, closure_arg->getName());
+    Frame* child = new Frame(parent, closure_arg);
 
     /* Stack-allocate our parameters and load their Argument values. */
-    size_t idx = 0;
-    for (auto AI = F->arg_begin(); AI != F->arg_end(); ++AI, ++idx) {
-        if (idx < params->params.size()) {
-            name = StringRef(params->params[idx]);
-            AI->setName(name);
-            Value* alloc = stack_alloc(child, F, name);
-            Builder.CreateStore(coerce(AI, 0), alloc);
-        } 
+    idx = 0;
+    for (auto AI = F->arg_begin(); idx < params->params.size(); ++AI, ++idx) {
+        Value* alloc = stack_alloc(child, F, AI->getName());
+        Builder.CreateStore(coerce(AI, 0), alloc);
     }
+
+    printf("\nFunction before body generation:\n");
+    F->dump();
+    printf("\n\n");
 
     /* Construct the function body. */
     Builder.CreateRet(coerce(block->CodeGen(child), 1));
     verifyFunction(*F);
+
+    printf("Function after body generation:\n");
+    F->dump();
+    printf("\n\n");
+
     TheFPM->run(*F);
 
     Builder.restoreIP(ip);
@@ -267,10 +280,87 @@ void yyerror(char const* arg)
     printf("yyerror: %s\n", arg);
 }
 
+void Ident::disp()
+{
+    printf("(Ident %s)", id.data());
+}
+
+void Number::disp()
+{
+    printf("(Number %ld)", num);
+}
+
+void String::disp()
+{
+    printf("(String %s)", str);
+}
+
+void Block::disp()
+{
+    printf("(Block ");
+    for (size_t i=0; i < exprs.size(); ++i) {
+        exprs[i]->disp(); 
+        if (i < exprs.size() - 1) {
+            printf(" ");
+        }
+    }
+    printf(")");
+}
+
+void FuncCall::disp()
+{
+    printf("(FuncCall "); 
+    args->disp();
+    printf(")");
+}
+
+void FuncDef::disp()
+{
+    printf("(FuncDef (");
+    for (char* p : params->params) {
+        printf(" %s ", p);
+    }
+    printf(")\n");
+    block->disp();
+    printf(")");
+}
+
+void Assignment::disp()
+{
+    printf("(Assignment %s ", id.data()); 
+    value->disp(); 
+    printf(")");
+}
+
+void UnaryOp::disp()
+{
+    printf("(%c ", op);
+    arg->disp();
+    printf(")");
+}
+
+void BinaryOp::disp()
+{
+    printf("(%c ", op);
+    lhs->disp();
+    printf(" ");
+    rhs->disp();
+    printf(")");
+}
+
+void IfElse::disp()
+{
+    printf("(if ");
+    test->disp();
+    consequent->disp();
+    alternate->disp();
+    printf(")");
+}
+
 /*
- * Code has been liberally stolen from the Kaleidoscope tutorial:
+ *      Code has been liberally stolen from the Kaleidoscope tutorial:
  *
- *                  http://llvm.org/docs/tutorial/
+ *                      http://llvm.org/docs/tutorial/
  */
 int main()
 {
@@ -316,13 +406,16 @@ int main()
                "on this architecture.\n"); exit(1);
     }
 
+    printf("Parse:\n");
+    Program->disp();
     Program->CodeGen(&RootClosure);
+    printf("\n\nLLVM IR:\n");
     TheModule->dump();
 
     void* entry = Exec->getPointerToFunction(Program->F);
     int64_t (*i64entry)(void*) = (int64_t (*)(void*)) entry;
     int64_t result = i64entry(NULL);
-    printf(":: %ld\n", result);
+    printf("\n=> %ld\n", result);
 
     delete Program;
     return 0;

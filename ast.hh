@@ -30,6 +30,7 @@ struct Expr
 {
     virtual ~Expr() {}
     virtual llvm::Value* CodeGen(Frame* frame) = 0;
+    virtual void disp() = 0;
 };
 
 struct Ident : public Expr
@@ -41,6 +42,7 @@ struct Ident : public Expr
     {}
 
     virtual llvm::Value* CodeGen(Frame* frame);
+    virtual void disp();
 };
 
 struct Number : public Expr
@@ -52,6 +54,7 @@ struct Number : public Expr
     {}
 
     virtual llvm::Value* CodeGen(Frame* frame);
+    virtual void disp();
 };
 
 struct String : public Expr
@@ -68,6 +71,7 @@ struct String : public Expr
     }
 
     virtual llvm::Value* CodeGen(Frame* frame);
+    virtual void disp();
 };
 
 struct Block : public Expr
@@ -84,6 +88,7 @@ struct Block : public Expr
     }
 
     virtual llvm::Value* CodeGen(Frame* frame);
+    virtual void disp();
 };
 
 struct FuncCall : public Expr 
@@ -102,6 +107,7 @@ struct FuncCall : public Expr
     }
 
     virtual llvm::Value* CodeGen(Frame* frame);
+    virtual void disp();
 };
 
 struct Parameters
@@ -133,6 +139,7 @@ struct FuncDef : public Expr
     }
 
     virtual llvm::Value* CodeGen(Frame* frame);
+    virtual void disp();
 };
 
 struct Assignment : public Expr
@@ -151,6 +158,7 @@ struct Assignment : public Expr
     }
 
     virtual llvm::Value* CodeGen(Frame* frame);
+    virtual void disp();
 };
 
 struct UnaryOp : public Expr 
@@ -168,6 +176,7 @@ struct UnaryOp : public Expr
     }
 
     virtual llvm::Value* CodeGen(Frame* frame);
+    virtual void disp();
 };
 
 struct BinaryOp : public Expr
@@ -186,6 +195,7 @@ struct BinaryOp : public Expr
     }
 
     virtual llvm::Value* CodeGen(Frame* frame);
+    virtual void disp();
 };
 
 struct IfElse : public Expr
@@ -205,6 +215,7 @@ struct IfElse : public Expr
     }
 
     virtual llvm::Value* CodeGen(Frame* frame);
+    virtual void disp();
 };
 
 /*
