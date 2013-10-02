@@ -1,4 +1,3 @@
-- Lexical scoping, function definitions, and function calls
 - Compilation to bitcode, optimization
 - Translation of bitcode to an executable
 - Native functions
