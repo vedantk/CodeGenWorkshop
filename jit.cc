@@ -17,6 +17,9 @@
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Transforms/Scalar.h"
 
+#include "llvm/Bitcode/ReaderWriter.h"
+#include "llvm/Support/raw_ostream.h"
+
 using namespace std;
 using namespace llvm;
 
@@ -376,7 +379,7 @@ int main()
     InitializeNativeTarget();
     LLVMContext &Context = getGlobalContext();
 
-    TheModule = new Module("my cool jit", Context);
+    TheModule = new Module("prism", Context);
 
     string ErrStr;
     Exec = EngineBuilder(TheModule).setErrorStr(&ErrStr).create();
@@ -424,6 +427,10 @@ int main()
     int64_t (*i64entry)(void*) = (int64_t (*)(void*)) entry;
     int64_t result = i64entry(NULL);
     printf("\n=> %ld\n", result);
+
+    string errs;
+    raw_fd_ostream bitstream("prism.bc", errs, raw_fd_ostream::F_Binary);
+    WriteBitcodeToFile(TheModule, bitstream);
 
     delete Program;
     return 0;
