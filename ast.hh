@@ -91,6 +91,25 @@ struct Block : public Expr
     virtual void disp();
 };
 
+struct NativeCall : public Expr
+{
+    char* id;
+    Block* args;
+
+    NativeCall(char* _id, Block* _args)
+        : id(_id), args(_args)
+    {}
+
+    ~NativeCall()
+    {
+        free(id);
+        delete args;
+    }
+
+    virtual llvm::Value* CodeGen(Frame* frame);
+    virtual void disp();
+};
+
 struct FuncCall : public Expr 
 {
     Expr* func;

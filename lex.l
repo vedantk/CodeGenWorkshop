@@ -17,7 +17,7 @@ void setlval(void* ptr)
 
 ID	[a-zA-Z][a-zA-Z0-9_]*
 INT	-?[0-9]+
-PRIM	[\+\-\*/=\[\]<>()!,{}]
+PRIM	[\+\-\*/=\[\]<>()!,{}\^]
 NOTE	;(.*)$
 NOISE	[ \n\t,;]
 
@@ -26,6 +26,7 @@ NOISE	[ \n\t,;]
 "if"	{ return IF; }
 "else"	{ return ELSE; }
 ":="	{ return SET; }
+"@"	{ return AT; }
 
 {ID}	{ setlval(strdup(yytext)); return ID; }
 {INT}	{ setlval((void*) atol(yytext)); return NUMBER; }

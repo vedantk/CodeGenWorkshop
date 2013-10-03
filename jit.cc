@@ -1,3 +1,4 @@
+#include <map>
 #include <string>
 #include <stdio.h>
 
@@ -16,6 +17,7 @@
 #include "llvm/PassManager.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Transforms/Scalar.h"
+#include "llvm/ADT/ArrayRef.h"
 
 #include "llvm/Bitcode/ReaderWriter.h"
 #include "llvm/Support/raw_ostream.h"
@@ -35,6 +37,7 @@ static FunctionPassManager* TheFPM;
 static Type* Int64Ty = Type::getInt64Ty(getGlobalContext());
 static Type* Int64PtrTy = Type::getInt64PtrTy(getGlobalContext());
 static Function* MallocF;
+static map<string, Function*> NativeFunctions;
 
 /*
  * Cast values into the right format. 
@@ -92,6 +95,34 @@ Value* Block::CodeGen(Frame* frame)
         exprs[i]->CodeGen(frame);
     }
     return exprs.back()->CodeGen(frame);
+}
+
+Value* NativeCall::CodeGen(Frame* frame)
+{
+    string str_id(id);
+    Function* NativeF;
+    if (!NativeFunctions.count(str_id)) {
+        vector<Type*> NativeArgs(args->exprs.size(), Int64Ty);
+        FunctionType* NativeFT = FunctionType::get(Int64PtrTy, NativeArgs, false);
+        NativeF = Function::Create(NativeFT, 
+                Function::ExternalLinkage, id, TheModule);
+        NativeF->setCallingConv(CallingConv::C);
+        NativeFunctions[str_id] = NativeF;
+    } else {
+        NativeF = NativeFunctions[str_id];
+    }
+
+    vector<Value*> native_args;
+    for (Expr* e : args->exprs) {
+        native_args.push_back(coerce(e->CodeGen(frame), 0));
+    }
+    ArrayRef<Value*> args_ref(native_args);
+    return Builder.CreateCall(NativeF, args_ref, "native_call");
+}
+
+void NativeCall::disp()
+{
+    printf("(NativeCall %s)", id);
 }
 
 Value* FuncCall::CodeGen(Frame* frame)
@@ -245,6 +276,7 @@ Value* BinaryOp::CodeGen(Frame* frame)
         case '*': return Builder.CreateMul(L, R, "mul");
         case '/': return Builder.CreateSDiv(L, R, "div");
         case '=': return Builder.CreateICmpEQ(L, R, "eq");
+        case '^': return Builder.CreateXor(L, R, "xor");
         default: 
             printf("[BinaryOp::CodeGen] Unsupported operation\n"); exit(1);
     }

@@ -10,7 +10,7 @@ extern void yyerror(char const *);
 
 %define api.value.type {union semval}
 
-%token NUMBER ID STRING IF ELSE SET 
+%token NUMBER ID STRING IF ELSE SET AT
 
 %type <funcdef> program funcdef
 %type <exprs> exprs block
@@ -44,7 +44,9 @@ expr : '(' expr ')' { $$ = $2; }
      | expr '*' expr { $$ = (Expr*) new BinaryOp('*', $1, $3); }
      | expr '/' expr { $$ = (Expr*) new BinaryOp('/', $1, $3); } 
      | expr '=' expr { $$ = (Expr*) new BinaryOp('=', $1, $3); }
+     | expr '^' expr { $$ = (Expr*) new BinaryOp('^', $1, $3); }
      | ID SET expr { $$ = (Expr*) new Assignment($1, $3); }
+     | AT ID '[' exprs ']' { $$ = (Expr*) new NativeCall($2, $4); }
      | expr '[' exprs ']' { $$ = (Expr*) new FuncCall($1, $3); }
      | IF '(' expr ')' block ELSE block { $$ = (Expr*) new IfElse($3, $5, $7); }
      | funcdef { $$ = (Expr*) $1; }
